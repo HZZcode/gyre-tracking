@@ -37,34 +37,57 @@ def solve(C: NDArray) -> tuple[IntArray, FloatArray, FloatArray]:
     """Solve the square assignment problem; see the module docstring."""
     C = np.asarray(C, dtype=float)
     if C.ndim != 2 or C.shape[0] != C.shape[1]:
-        raise ValueError("C must be square; pad with dummy columns first (see associate)")
+        raise ValueError(
+            "C must be square; pad with dummy columns first (see associate)"
+        )
     if not np.all(np.isfinite(C)):
         raise ValueError("C must be finite; encode gates via dummy costs, not inf")
 
     n = C.shape[0]
-    # Implementation sketch (shortest augmenting path with potentials):
-    #
-    #   u = zeros(n); v = zeros(n)          # dual potentials
-    #   row_of_col = full(n, -1)            # row_of_col[j] = row matched to column j
-    #   for i in range(n):                  # phase i: match row i
-    #       tree_rows = {i}; tree_cols = set()
-    #       minv = C[i] - u[i] - v          # slack from the newest tree row
-    #       parent = full(n, -1)            # for path reconstruction
-    #       repeat:
-    #           j* = argmin over not-yet-used columns of minv
-    #           if minv[j*] > 0:            # no tight column reachable yet:
-    #               delta = minv[j*]        #   move potentials by the minimal slack
-    #               u[tree_rows] += delta; v[tree_cols] -= delta; minv[unused] -= delta
-    #           mark j* used
-    #           if row_of_col[j*] == -1:    # unmatched column: augment
-    #               flip matching along parent pointers; break
-    #           else:                       # matched column: its row joins the tree
-    #               tree_rows.add(row_of_col[j*]); tree_cols.add(j*)
-    #               minv = minimum(minv, C[row_of_col[j*]] - u[row_of_col[j*]] - v)
-    #   ...
-    #
-    # On return, all three certificate conditions in certificates.py must hold.
-    raise NotImplementedError("implement the JV shortest-augmenting-path solver")
+    u = np.zeros(n)
+    v = np.zeros(n)
+    row_of_col = np.full(n, -1, dtype=np.int64)    # col -> matched row
+    match_of_row = np.full(n, -1, dtype=np.int64)  # row -> matched col (inverse)
+    for i in range(n):
+        tree_rows = {i}
+        tree_cols = set()
+        minv = C[i] - u[i] - v
+        parent = np.full(n, i, dtype=np.int64)     # col -> row that discovered it
+        used = np.zeros(n, dtype=bool)             # per phase
+        while True:
+            j = int(np.argmin(np.where(used, np.inf, minv)))
+            used[j] = True
+            delta = minv[j]
+            if delta != 0:
+                # Potentials move by the minimal slack. delta < 0 is possible
+                # with negative costs and self-corrects the new row's dual
+                # feasibility (its u drops to min_j C[i, j] - v[j]).
+                u[list(tree_rows)] += delta
+                v[list(tree_cols)] -= delta
+                minv[~used] -= delta
+            if row_of_col[j] == -1:
+                # Unmatched column reached: flip the alternating path.
+                jfree = j
+                while True:
+                    r = parent[jfree]              # row that discovered this column
+                    j_old = match_of_row[r]        # its previous column (-1 at the root)
+                    match_of_row[r] = jfree
+                    row_of_col[jfree] = r
+                    if j_old == -1:
+                        break
+                    jfree = j_old                  # freed column goes to its discoverer
+                break
+            # Matched column: its row joins the tree; rescan from that row.
+            r = row_of_col[j]
+            tree_rows.add(r)
+            tree_cols.add(j)
+            cur = C[r] - u[r] - v
+            better = (~used) & (cur < minv)
+            minv[better] = cur[better]
+            parent[better] = r
+    sigma = np.empty(n, dtype=np.int64)
+    sigma[row_of_col] = np.arange(n)
+    return sigma, u, v
 
 
 def greedy_solve(C: NDArray) -> IntArray:
