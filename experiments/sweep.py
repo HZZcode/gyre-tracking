@@ -1,35 +1,88 @@
-"""Greedy-vs-Hungarian association sweeps (experiment driver). TODO
+"""Solver comparison sweep: certified Hungarian vs greedy baseline.
 
-Scenarios:
-- S1 `double-gyre`: detections from tracking.detector_sim on the analytic flow;
-- S2 `crossing`: two constant-velocity targets crossing at a shallow angle,
-  the pathological case for greedy matching.
-
-Conditions: sigma in {0.01, 0.03, 0.06, 0.10}, p_detect in {0.95, 0.85, 0.70},
-clutter in {0, 1, 3}, 20 seeds per cell, algorithms {greedy, hungarian}.
-
-Output: experiments/results/sweep.csv with columns
-[scenario, algo, sigma, p_detect, clutter, seed, assoc_acc, frag_mean, id_switches]
+Grid (S1 double gyre): sigma x p_detect x clutter x 20 seeds x 2 solvers,
+200 frames per run. Writes experiments/results/sweep.csv, one row per run;
+experiments/plot_sweep.py aggregates it into the comparison figure.
 """
 
 from __future__ import annotations
 
+import csv
+import pathlib
+import sys
+import time
 
-def run_condition(
-    scenario: str,
-    algo: str,
-    sigma: float,
-    p_detect: float,
-    clutter: float,
-    seed: int,
-) -> dict:
-    """Run one (scenario, algorithm, noise cell) and return one metric row."""
-    raise NotImplementedError
+import numpy as np
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
+
+from tracking import associate, detector_sim, flow, metrics  # noqa: E402
+from tracking.hungarian import greedy_solve  # noqa: E402
+
+N_FRAMES = 200
+DT = 0.1
+SEEDS = range(20)
+SIGMAS = [0.01, 0.03, 0.06, 0.10]
+P_DETECTS = [0.95, 0.85, 0.70]
+CLUTTERS = [0.0, 1.0, 3.0]
 
 
-def main() -> None:
-    """Run the full sweep and write experiments/results/sweep.csv."""
-    raise NotImplementedError
+def greedy_solver(C):
+    """Greedy baseline as a drop-in solver: same (sigma, u, v) shape as
+    hungarian.solve, with fake duals (u = v = 0). Run with verify=False —
+    greedy is not optimal and has no certificate to check."""
+    return greedy_solve(C), np.zeros(len(C)), np.zeros(len(C))
+
+
+def run_one(sigma, p_detect, clutter, seed, solver_name):
+    gate = 6.8 * sigma + 0.02
+    gyre = flow.DoubleGyre()
+    times = np.arange(N_FRAMES) * DT
+    rng = np.random.default_rng(seed)
+    frames = detector_sim.simulate(gyre, times, sigma, p_detect, clutter, rng)
+    if solver_name == "hungarian":
+        tm = associate.TrackManager(gate_sq=gate**2, dt=DT)
+    elif solver_name == "greedy":
+        tm = associate.TrackManager(gate_sq=gate**2, dt=DT,
+                                    solver=greedy_solver, verify=False)
+    else:
+        raise ValueError(solver_name)
+    gt, matches = [], []
+    for f in frames:
+        matches.append(tm.update(f.points))
+        gt.append(f.source)
+    frag = metrics.fragmentation_counts(gt, matches)
+    return {
+        "assoc": metrics.association_accuracy(gt, matches),
+        "frag": sum(frag.values()) / len(frag) if frag else float("nan"),
+        "ids": metrics.id_switches(gt, matches),
+    }
+
+
+def main():
+    out = pathlib.Path(__file__).resolve().parent / "results"
+    out.mkdir(exist_ok=True)
+    csv_path = out / "sweep.csv"
+    t0 = time.time()
+    n = 0
+    with open(csv_path, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["sigma", "p_detect", "clutter", "seed", "solver",
+                    "assoc", "frag", "ids"])
+        for sigma in SIGMAS:
+            for p in P_DETECTS:
+                for c in CLUTTERS:
+                    for seed in SEEDS:
+                        for name in ("hungarian", "greedy"):
+                            r = run_one(sigma, p, c, seed, name)
+                            w.writerow([sigma, p, c, seed, name,
+                                        f"{r['assoc']:.4f}",
+                                        f"{r['frag']:.4f}", r["ids"]])
+                            n += 1
+                    fh.flush()
+                print(f"[{time.time() - t0:6.0f}s] sigma={sigma} p={p}: "
+                      f"{c:.0f} clutter done ({n} runs)", flush=True)
+    print(f"{n} runs -> {csv_path}  ({time.time() - t0:.0f}s total)", flush=True)
 
 
 if __name__ == "__main__":

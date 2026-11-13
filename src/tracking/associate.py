@@ -12,6 +12,9 @@ reading):
   compete for detections in the LAP; provisional tracks may only claim
   leftovers, and die on their first miss — clutter never steals detections
   from established tracks;
+- birth gating: an unclaimed detection inside some confirmed track's gate is
+  NOT promoted to a new track (it is clutter or a duplicate) — only gates
+  that no confirmed track could explain birth a track;
 - lifecycle:   orphan detection -> provisional track; established tracks may
   coast up to `max_coast` consecutive misses; tracks shorter than
   `min_length` positions are discarded as clutter.
@@ -22,6 +25,7 @@ Mahalanobis gating, multi-frame min-cost-flow association.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -107,31 +111,44 @@ class TrackManager:
     max_coast: int = 5
     min_hits: int = 3
     min_length: int = 3
+    solver: Callable = hungarian.solve   # (C) -> (sigma, u, v); swap for greedy
+    verify: bool = True                  # verify the dual certificate each LAP
     next_id: int = 0
     tracks: list = field(default_factory=list)     # live tracks
     finished: list = field(default_factory=list)   # terminated tracks
 
-    def _match_pass(self, tracks: list, detections: FloatArray, claimed: np.ndarray) -> None:
-        """One verified LAP: `tracks` compete for `detections` (m, 2).
+    def _match_pass(self, tracks: list, detections: FloatArray, idx: np.ndarray,
+                    claimed: np.ndarray, frame_match: np.ndarray) -> np.ndarray:
+        """One verified LAP: `tracks` compete for detections[idx].
 
-        A track matched to a dummy column coasts (misses += 1); a detection
-        matched to a dummy row stays unclaimed. Successful claims update the
-        track in place and set `claimed[j] = True`.
+        `idx` holds the ORIGINAL detection indices this pass competes for
+        (pass 2 sees only the leftovers, so subset bookkeeping must map back
+        through idx). A track matched to a dummy column coasts (misses += 1);
+        a detection matched to a dummy row stays unclaimed. Successful claims
+        update the track in place, set claimed[orig] = True and record the
+        track id in frame_match[orig]. Returns `explainable`, a mask over idx
+        marking detections that were within some track's gate.
         """
-        m = len(detections)
+        m = len(idx)
+        subset = detections[idx]
         predicted = np.array([tr.predicted(self.dt, self.max_step) for tr in tracks])
-        C = build_cost_matrix(predicted, detections, self.gate_sq)
-        sigma, u, v = hungarian.solve(C)
-        certificates.verify_optimal(C, sigma, u, v)
+        C = build_cost_matrix(predicted, subset, self.gate_sq)
+        explainable = (C[:len(tracks), :m] <= self.gate_sq).any(axis=0)
+        sigma, u, v = self.solver(C)
+        if self.verify:
+            certificates.verify_optimal(C, sigma, u, v)
         for i, tr in enumerate(tracks):
             j = int(sigma[i])
             if j < m:
-                tr.positions.append(detections[j])
+                orig = int(idx[j])
+                tr.positions.append(subset[j])
                 tr.misses = 0
                 tr.hits += 1
-                claimed[j] = True
+                claimed[orig] = True
+                frame_match[orig] = tr.track_id
             else:
                 tr.misses += 1
+        return explainable
 
     def update(self, detections: FloatArray):
         """Advance the tracker by one frame.
@@ -142,13 +159,15 @@ class TrackManager:
         m = len(detections)
         frame_match = np.full(m, -1, dtype=np.int64)
         claimed = np.zeros(m, dtype=bool)
+        explainable = np.zeros(m, dtype=bool)
 
         confirmed = [tr for tr in self.tracks if tr.hits >= self.min_hits]
         provisional = [tr for tr in self.tracks if tr.hits < self.min_hits]
 
         # Pass 1: confirmed tracks compete for all detections.
         if confirmed and m > 0:
-            self._match_pass(confirmed, detections, claimed)
+            explainable = self._match_pass(confirmed, detections,
+                                           np.arange(m), claimed, frame_match)
         else:
             for tr in confirmed:
                 tr.misses += 1
@@ -156,13 +175,18 @@ class TrackManager:
         # Pass 2: provisional tracks may only claim leftovers (same LAP).
         free = np.flatnonzero(~claimed)
         if provisional and len(free) > 0:
-            self._match_pass(provisional, detections[free], claimed)
+            self._match_pass(provisional, detections, free, claimed, frame_match)
         else:
             for tr in provisional:
                 tr.misses += 1
 
-        # Births: detections claimed by nobody start new provisional tracks.
-        for j in np.flatnonzero(~claimed):
+        # Births: unclaimed detections start new provisional tracks — but
+        # only detections that NO confirmed track's gate could explain. A
+        # detection inside a confirmed gate that still went unclaimed lost
+        # the LAP: it is clutter or a duplicate, not evidence of a new
+        # object. Without this birth gate, clutter chains confirm into
+        # track doppelgangers that then steal real detections.
+        for j in np.flatnonzero(~claimed & ~explainable):
             self.tracks.append(Track(track_id=self.next_id,
                                      positions=[detections[int(j)]],
                                      misses=0, hits=1))
