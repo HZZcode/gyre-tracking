@@ -15,7 +15,7 @@ within float tolerance. Together the three conditions PROVE that sigma is
 optimal; `certificates.verify_optimal` checks them, and the brute-force test
 suite compares optimal values on small instances. Rectangular inputs are NOT
 handled here: `associate.build_cost_matrix` pads to square with dummy
-columns before calling.
+rows/columns before calling.
 
 Algorithm: shortest augmenting path with dual potentials (JV variant; the
 same scheme scipy uses internally). One phase per row; in each phase an

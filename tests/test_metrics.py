@@ -25,8 +25,8 @@ def test_fragmentation_counts():
 
 
 def test_association_accuracy():
-    # object 0: 2 of 3 detections on its majority track; object 1: 1 of 1.
-    assert association_accuracy(GT, MATCHES) == pytest.approx(3 / 4)
+    # object 0: 2 of 3 detections on its majority track; object 1: 2 of 2.
+    assert association_accuracy(GT, MATCHES) == pytest.approx(4 / 5)
 
 
 def test_id_switches():
