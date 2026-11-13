@@ -67,22 +67,25 @@ class Track:
 def build_cost_matrix(
     predicted: FloatArray, detections: FloatArray, gate_sq: float
 ) -> FloatArray:
-    """Pad the (n_tracks, m) distance block into an S x S matrix, S = max(n, m).
+    """Pad the (n_tracks, m) distance block into an S x S matrix, S = n + m.
 
     Four blocks, base fill = gate_sq:
     - rows [0, n) x cols [0, m): squared distances (real pairs);
-    - rows [0, n) x cols [m, S): dummy columns — track matched here = coast;
-    - rows [n, S) x cols [0, m): dummy rows — detection matched here = unclaimed
-      (will spawn a new track);
-    - rows [n, S) x cols [m, S): filler.
+    - rows [0, n) x cols [m, m+n): dummy columns — track matched here = coast;
+    - rows [n, n+m) x cols [0, m): dummy rows — detection matched here =
+      unclaimed (will spawn a new track);
+    - rows [n, n+m) x cols [m, m+n): filler.
 
-    Filling everything unclaimed with gate_sq makes the per-pair decision
-    threshold exactly d2 < gate_sq: claiming a pair saves gate_sq on each
-    side, so it happens iff its cost is below the gate.
+    S = n + m guarantees EVERY track a dummy column and EVERY detection a
+    dummy row, so no pair is ever forced: with k real pairs the total cost is
+    gate_sq*(n+m) + sum(d2 - gate_sq over pairs), hence the per-pair decision
+    threshold is exactly d2 < gate_sq, independent of the track/detection
+    counts. (Padding only to max(n, m) would leave frames with m == n fully
+    forced — a distant clutter point could then hijack a track.)
     """
     n_tr = len(predicted)
     m = len(detections)
-    S = max(n_tr, m)
+    S = n_tr + m
     C = np.full((S, S), gate_sq)
     C[:n_tr, :m] = ((predicted[:, None, :] - detections[None, :, :]) ** 2).sum(-1)
     return C
