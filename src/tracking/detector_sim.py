@@ -30,23 +30,22 @@ class FrameDetections:
     source: IntArray    # (m_k,) true-object index, -1 = clutter
 
 
-def simulate(
-    gyre: DoubleGyre,
-    times: NDArray | list[float],
+def simulate_tracks(
+    truth: NDArray,
     sigma: float,
     p_detect: float,
     clutter_rate: float,
     rng: np.random.Generator,
 ) -> list[FrameDetections]:
-    """One detection sequence over `times` (K frames)."""
-    times = np.asarray(times, dtype=float)
-    centers = true_centers(gyre, times)  # (n_objects, K, 2)
+    """One detection sequence from a ground-truth array (n_objects, K, 2)."""
+    truth = np.asarray(truth, dtype=float)
+    n_obj, n_frames = truth.shape[0], truth.shape[1]
     frames: list[FrameDetections] = []
-    for k in range(len(times)):
+    for k in range(n_frames):
         pts: list[NDArray] = []
         src: list[int] = []
-        for obj in range(centers.shape[0]):
-            c = centers[obj, k]
+        for obj in range(n_obj):
+            c = truth[obj, k]
             if np.isnan(c[0]):
                 continue
             if rng.random() < p_detect:
@@ -62,3 +61,17 @@ def simulate(
             )
         )
     return frames
+
+
+def simulate(
+    gyre: DoubleGyre,
+    times: NDArray | list[float],
+    sigma: float,
+    p_detect: float,
+    clutter_rate: float,
+    rng: np.random.Generator,
+) -> list[FrameDetections]:
+    """One detection sequence over `times` (K frames), S1 gyre truth."""
+    times = np.asarray(times, dtype=float)
+    return simulate_tracks(true_centers(gyre, times), sigma, p_detect,
+                           clutter_rate, rng)
