@@ -7,5 +7,7 @@ build/
 dist/
 .idea/
 .vscode/
+# raw run data (regenerable via experiments/sweep.py / stitch_eval.py);
+# aggregated summary CSVs are force-added for the report
 experiments/results/
 .deps/
