@@ -34,6 +34,9 @@ def track_color(tid: int):
     return plt.get_cmap("tab10")(tid % 10)
 
 
+MIN_MATCHED_FRAMES_SHOWN = 10
+
+
 def draw_field(ax, gyre, t: float, alpha: float = 1.0):
     X, Y, PSI = psi_field(gyre, t)
     return ax.contourf(X, Y, PSI, levels=np.linspace(-0.1, 0.1, 21),
@@ -151,7 +154,15 @@ def overview(gyre, states: list, path, title: str = "") -> None:
             if tid in confirmed:
                 full.setdefault(tid, []).append(
                     (s["k"], None if coasting else np.asarray(pos)))
+    n_conf = len(confirmed)
+    # Legibility filter, disclosed in the title: short-lived confirmations
+    # (e.g. a chained-clutter track with 3 matched frames) are still counted
+    # in n_conf and in every metric, just not drawn over the hero figure.
+    shown = {tid: seq for tid, seq in full.items()
+             if sum(1 for _k, p in seq if p is not None) >= MIN_MATCHED_FRAMES_SHOWN}
     for tid, seq in full.items():
+        if tid not in shown:
+            continue
         seq.sort(key=lambda kv: kv[0])
         xs = np.array([np.nan if p is None else p[0] for _k, p in seq])
         ys = np.array([np.nan if p is None else p[1] for _k, p in seq])
@@ -165,8 +176,8 @@ def overview(gyre, states: list, path, title: str = "") -> None:
             last = seq[finite[-1]][1]
             ax.scatter([last[0]], [last[1]], s=48, facecolor="none",
                        edgecolor=track_color(tid), linewidths=1.8, zorder=6)
-    n_conf = len(confirmed)
-    ax.set_title(f"tracker view: confirmed trajectories ({n_conf} ids)")
+    ax.set_title(f"tracker view: confirmed trajectories "
+                 f"({n_conf} ids, {len(shown)} shown)")
 
     for a in axes:
         a.set_xlim(0, 2)

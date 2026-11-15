@@ -12,7 +12,10 @@ frame's matching optimal. **Trust the certificate, not the implementation.**
 
 Left: the sensor view — detections (dark dots), clutter (gray ×) and the
 closed-form vortex-center paths (gold stars). Right: the tracker view —
-certified per-frame assignments assembled into trajectories.
+certified per-frame assignments assembled into trajectories. Of the 3
+confirmed ids, 2 are drawn (>= 10 matched frames); the third is a short
+chained-clutter confirmation in the low-speed inter-vortex region — the
+honest residue of two-pass confirmation, counted in every metric.
 
 ## Results in one table
 
