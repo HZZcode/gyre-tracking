@@ -147,13 +147,24 @@ def overview(gyre, states: list, path, title: str = "") -> None:
                 lw=1.4, alpha=0.55, zorder=5)
     full: dict = {}
     for s in states:
-        for tid, (pos, *_rest) in s["snapshot"].items():
+        for tid, (pos, coasting, _prov) in s["snapshot"].items():
             if tid in confirmed:
-                full.setdefault(tid, []).append(np.asarray(pos))
-    for tid, pts in full.items():
-        pts = np.asarray(pts)
-        ax.plot(pts[:, 0], pts[:, 1], color=track_color(tid), lw=1.7,
+                full.setdefault(tid, []).append(
+                    (s["k"], None if coasting else np.asarray(pos)))
+    for tid, seq in full.items():
+        seq.sort(key=lambda kv: kv[0])
+        xs = np.array([np.nan if p is None else p[0] for _k, p in seq])
+        ys = np.array([np.nan if p is None else p[1] for _k, p in seq])
+        ax.plot(xs, ys, color=track_color(tid), lw=1.7,
                 alpha=0.9, zorder=6)
+        # A track that died while coasting: mark its last *measured* position
+        # hollow, so the trajectory ends where the data ended, not where a
+        # prediction drifted.
+        finite = np.flatnonzero(~np.isnan(xs))
+        if finite.size and seq[-1][1] is None:
+            last = seq[finite[-1]][1]
+            ax.scatter([last[0]], [last[1]], s=48, facecolor="none",
+                       edgecolor=track_color(tid), linewidths=1.8, zorder=6)
     n_conf = len(confirmed)
     ax.set_title(f"tracker view: confirmed trajectories ({n_conf} ids)")
 

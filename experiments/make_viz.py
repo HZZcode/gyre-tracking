@@ -64,9 +64,11 @@ def main():
     gyre, states, gt, matches = build_states()
     acc = metrics.association_accuracy(gt, matches)
     n_ids = len({tid for s in states for tid in s["snapshot"]})
+    n_conf = len({tid for s in states
+                  for tid, (_p, _c, prov) in s["snapshot"].items() if not prov})
     title = (f"double gyre tracking  (sigma={SIGMA}, p_detect={P_DETECT}, "
              f"clutter={CLUTTER:.0f}/frame)   association accuracy = {acc:.3f}"
-             f"   {n_ids} track ids total")
+             f"   {n_ids} ids born -> {n_conf} confirmed")
 
     out = pathlib.Path(__file__).resolve().parents[1] / "figures"
     out.mkdir(exist_ok=True)
